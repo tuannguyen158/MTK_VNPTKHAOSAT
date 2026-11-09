@@ -1,0 +1,83 @@
+name: untitled
+description: "A new Flutter project."
+
+publish_to: 'none'
+
+version: 1.0.0+1
+
+environment:
+  sdk: ^3.13.0
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+  cupertino_icons: ^1.0.8
+
+  # ==============================
+  # FIREBASE
+  # ==============================
+
+  firebase_core: ^4.13.0
+  firebase_auth: ^6.5.7
+  cloud_firestore: ^6.8.0
+
+  # ==============================
+  # TỈNH / THÀNH PHỐ
+  # PHƯỜNG / XÃ
+  # ==============================
+
+  vietnam_provinces: ^2.0.0
+  google_sign_in: ^7.2.0
+
+  # ==============================
+  # GPS / VỊ TRÍ
+  # ==============================
+
+  flutter_map: ^8.3.1
+  url_launcher: ^6.3.2
+  latlong2: ^0.10.1
+  geolocator: ^14.0.2
+  geocoding: ^5.0.0
+  http: ^1.6.0
+  excel: ^4.0.6
+  path_provider: ^2.1.6
+  share_plus: ^13.3.0
+  cross_file: ^0.3.5+4
+  shared_preferences: ^2.5.3
+  file_picker: ^12.0.0
+  local_auth: ^3.0.2
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+
+  flutter_lints: ^6.0.0
+
+  flutter_launcher_icons: ^0.14.4
+
+# ==============================
+# APP ICON
+# ==============================
+
+flutter_launcher_icons:
+  android: true
+  ios: true
+  image_path: "assets/images/logi.jpg"
+
+# ==============================
+# FLUTTER
+# ==============================
+
+flutter:
+
+  uses-material-design: true
+
+  assets:
+    - assets/images/vnpt1.jpg
+    - assets/images/back.jpg
+    - assets/images/logo.png
+    - assets/images/vnptavt.png
+    - assets/images/logi.jpg
+    - assets/images/logo2.jpg
+    - assets/images/123.png

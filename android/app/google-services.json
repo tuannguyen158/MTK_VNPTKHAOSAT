@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "517717075196",
+    "project_id": "vnpt-khao-sat",
+    "storage_bucket": "vnpt-khao-sat.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:517717075196:android:83850482ecfbdec0122379",
+        "android_client_info": {
+          "package_name": "com.example.untitled"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyAH0aObiTfC9mqrsXCpmPK-CekqQcKsKEU"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

@@ -1,0 +1,54 @@
+{
+  "project_info": {
+    "project_number": "517717075196",
+    "project_id": "vnpt-khao-sat",
+    "storage_bucket": "vnpt-khao-sat.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:517717075196:android:83850482ecfbdec0122379",
+        "android_client_info": {
+          "package_name": "com.example.untitled"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "517717075196-v3knt5hc52k8lournb4b9phur15d9v44.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.example.untitled",
+            "certificate_hash": "3e9dfc8015c7cefc68eb7bdab69d826623884b91"
+          }
+        },
+        {
+          "client_id": "517717075196-2hmv6ffjifgv6g8m768b0up929s5euc3.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyAH0aObiTfC9mqrsXCpmPK-CekqQcKsKEU"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "517717075196-2hmv6ffjifgv6g8m768b0up929s5euc3.apps.googleusercontent.com",
+              "client_type": 3
+            },
+            {
+              "client_id": "517717075196-jj9ihlo45e3c0pm447f7kk6pcua1n5ce.apps.googleusercontent.com",
+              "client_type": 2,
+              "ios_info": {
+                "bundle_id": "com.example.untitled"
+              }
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
