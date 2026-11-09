@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:math' as math;
 
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
@@ -53,6 +54,18 @@ class _MapScreenState extends State<MapScreen> {
   bool _isLoadingRoute = false;
   double? _routeDistanceMeters;
   double? _routeDurationSeconds;
+
+  // Chống gọi OSRM liên tục + bỏ qua kết quả cũ
+  int _routeRequestId = 0;
+  DateTime? _lastRouteFetchAt;
+
+  // true  = camera tự bám theo người dùng khi đang chỉ đường
+  // false = người dùng đã tự kéo/zoom bản đồ, không giật camera nữa
+  bool _followUser = true;
+
+  // Chỉ mục dữ liệu (tính 1 lần cho mỗi lần Firestore đổi dữ liệu)
+  QuerySnapshot<Map<String, dynamic>>? _indexedSnapshot;
+  List<_IndexedLocation> _index = [];
 
   // =========================================================
   // TÌM KIẾM / LỌC HKD
@@ -139,82 +152,6 @@ class _MapScreenState extends State<MapScreen> {
   }
 
   // =========================================================
-  // LẤY DANH SÁCH HKD CÓ GPS
-  // =========================================================
-
-  List<_BusinessLocation> _getLocations(
-      QuerySnapshot<Map<String, dynamic>> snapshot,
-      ) {
-    final List<_BusinessLocation> result = [];
-
-    for (final doc in snapshot.docs) {
-      final data = doc.data();
-
-      final latitude = _toDouble(data['latitude']);
-      final longitude = _toDouble(data['longitude']);
-
-      if (latitude == null || longitude == null) {
-        continue;
-      }
-
-      // Kiểm tra tọa độ hợp lệ
-      if (latitude < -90 ||
-          latitude > 90 ||
-          longitude < -180 ||
-          longitude > 180) {
-        continue;
-      }
-
-      result.add(
-        _BusinessLocation(
-          id: doc.id,
-          name: _valueOf(
-            data,
-            [
-              'tenHoKinhDoanh',
-              'tenHKD',
-              'ten',
-              'name',
-            ],
-            fallback: 'Hộ kinh doanh',
-          ),
-          owner: _valueOf(
-            data,
-            [
-              'chuHoKinhDoanh',
-              'chuHo',
-              'hoTenChuHo',
-            ],
-            fallback: 'Chưa có chủ hộ',
-          ),
-          phone: _valueOf(
-            data,
-            [
-              'soDienThoai',
-              'sdt',
-              'phone',
-            ],
-            fallback: 'Chưa có SĐT',
-          ),
-          address: _valueOf(
-            data,
-            [
-              'diaChi',
-              'address',
-            ],
-            fallback: 'Chưa có địa chỉ',
-          ),
-          latitude: latitude,
-          longitude: longitude,
-          data: data,
-        ),
-      );
-    }
-
-    return result;
-  }
-
-  // =========================================================
   // ĐƯA MAP VỀ TOÀN BỘ MARKER
   // =========================================================
 
@@ -269,9 +206,9 @@ class _MapScreenState extends State<MapScreen> {
   // =========================================================
 
   Future<void> _showDirectionsChoice(_BusinessLocation item) async {
+    // Đang chỉ đường mà chọn HKD khác -> dừng tuyến cũ rồi cho chọn lại.
     if (_isNavigating) {
       await _stopInAppNavigation();
-      return;
     }
 
     if (!mounted) return;
@@ -375,12 +312,20 @@ class _MapScreenState extends State<MapScreen> {
   // ROUTING TRONG APP - OSRM / OPENSTREETMAP
   // =========================================================
 
-  Future<void> _fetchRoute(LatLng from, LatLng to) async {
+  Future<void> _fetchRoute(
+    LatLng from,
+    LatLng to, {
+    bool clearOld = true,
+  }) async {
     if (!mounted) return;
+
+    final requestId = ++_routeRequestId;
+    _lastRouteFetchAt = DateTime.now();
 
     setState(() {
       _isLoadingRoute = true;
-      _routePoints = [];
+      // Khi cập nhật tuyến lúc đang đi thì giữ đường cũ, tránh bị nhấp nháy.
+      if (clearOld) _routePoints = [];
     });
 
     try {
@@ -396,7 +341,7 @@ class _MapScreenState extends State<MapScreen> {
         headers: const {
           'User-Agent': 'VNPT-Khao-Sat/1.0',
         },
-      );
+      ).timeout(const Duration(seconds: 15));
 
       if (response.statusCode != 200) {
         throw Exception('Máy chủ chỉ đường trả về ${response.statusCode}.');
@@ -429,7 +374,12 @@ class _MapScreenState extends State<MapScreen> {
       )
           .toList();
 
-      if (!mounted) return;
+      // Có yêu cầu mới hơn (hoặc đã dừng chỉ đường) -> bỏ kết quả này.
+      if (!mounted ||
+          requestId != _routeRequestId ||
+          !_isNavigating) {
+        return;
+      }
 
       setState(() {
         _routePoints = points;
@@ -439,7 +389,7 @@ class _MapScreenState extends State<MapScreen> {
             (route['duration'] as num?)?.toDouble();
       });
     } catch (e) {
-      if (!mounted) return;
+      if (!mounted || requestId != _routeRequestId) return;
 
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
@@ -447,7 +397,7 @@ class _MapScreenState extends State<MapScreen> {
         ),
       );
     } finally {
-      if (mounted) {
+      if (mounted && requestId == _routeRequestId) {
         setState(() {
           _isLoadingRoute = false;
         });
@@ -455,64 +405,26 @@ class _MapScreenState extends State<MapScreen> {
     }
   }
 
+  // Khoảng cách (mét) từ vị trí hiện tại tới điểm gần nhất trên tuyến.
+  double _distanceToRoute(LatLng current) {
+    if (_routePoints.isEmpty) return double.infinity;
+
+    const distance = Distance();
+    var best = double.infinity;
+
+    for (final point in _routePoints) {
+      final d = distance.as(LengthUnit.Meter, current, point);
+      if (d < best) best = d;
+    }
+
+    return best;
+  }
+
   Future<void> _startInAppNavigation(
       _BusinessLocation item,
       ) async {
     try {
-      final serviceEnabled =
-      await Geolocator.isLocationServiceEnabled();
-
-      if (!serviceEnabled) {
-        if (!mounted) return;
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: const Text(
-              'GPS đang tắt. Vui lòng bật vị trí trên thiết bị.',
-            ),
-            action: SnackBarAction(
-              label: 'MỞ',
-              onPressed: () {
-                Geolocator.openLocationSettings();
-              },
-            ),
-          ),
-        );
-        return;
-      }
-
-      var permission = await Geolocator.checkPermission();
-
-      if (permission == LocationPermission.denied) {
-        permission = await Geolocator.requestPermission();
-      }
-
-      if (permission == LocationPermission.denied) {
-        if (!mounted) return;
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Bạn đã từ chối quyền truy cập vị trí.'),
-          ),
-        );
-        return;
-      }
-
-      if (permission == LocationPermission.deniedForever) {
-        if (!mounted) return;
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: const Text(
-              'Quyền vị trí đã bị từ chối vĩnh viễn.',
-            ),
-            action: SnackBarAction(
-              label: 'CÀI ĐẶT',
-              onPressed: () {
-                Geolocator.openAppSettings();
-              },
-            ),
-          ),
-        );
-        return;
-      }
+      if (!await _ensureLocationPermission()) return;
 
       final position = await Geolocator.getCurrentPosition(
         locationSettings: const LocationSettings(
@@ -537,7 +449,10 @@ class _MapScreenState extends State<MapScreen> {
         _currentLocation = start;
         _currentAccuracy = position.accuracy;
         _isNavigating = true;
+        _followUser = true;
       });
+
+      _mapController.move(start, 17);
 
       await _fetchRoute(start, target);
 
@@ -549,41 +464,84 @@ class _MapScreenState extends State<MapScreen> {
               accuracy: LocationAccuracy.high,
               distanceFilter: 5,
             ),
-          ).listen((position) async {
-            if (!mounted || !_isNavigating) return;
+          ).listen(
+                (position) async {
+              if (!mounted || !_isNavigating) return;
 
-            final current = LatLng(
-              position.latitude,
-              position.longitude,
-            );
-
-            setState(() {
-              _currentLocation = current;
-              _currentAccuracy = position.accuracy;
-            });
-
-            _mapController.move(current, 17);
-
-            // Cập nhật tuyến khi người dùng di chuyển ít nhất ~20m.
-            final target = _navigationTarget;
-            if (target != null && _routePoints.isNotEmpty) {
-              final distance = const Distance().as(
-                LengthUnit.Meter,
-                current,
-                _routePoints.first,
+              final current = LatLng(
+                position.latitude,
+                position.longitude,
               );
 
-              if (distance > 20) {
-                await _fetchRoute(
+              setState(() {
+                _currentLocation = current;
+                _currentAccuracy = position.accuracy;
+              });
+
+              // Chỉ bám camera khi người dùng chưa tự kéo bản đồ,
+              // và giữ nguyên mức zoom họ đang dùng.
+              if (_followUser) {
+                _mapController.move(
                   current,
-                  LatLng(
-                    target.latitude,
-                    target.longitude,
-                  ),
+                  math.max(_mapController.camera.zoom, 15),
                 );
               }
-            }
-          });
+
+              final target = _navigationTarget;
+              if (target == null) return;
+
+              final targetPoint = LatLng(
+                target.latitude,
+                target.longitude,
+              );
+
+              // Đã đến nơi (cách điểm đến <= 30m).
+              final toTarget = const Distance().as(
+                LengthUnit.Meter,
+                current,
+                targetPoint,
+              );
+
+              if (toTarget <= 30) {
+                final name = target.name;
+                await _stopInAppNavigation();
+
+                if (!mounted) return;
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(
+                    content: Text('Bạn đã đến "$name".'),
+                  ),
+                );
+                return;
+              }
+
+              // Chỉ tính lại tuyến khi đi chệch khỏi tuyến > 50m,
+              // không có yêu cầu nào đang chạy và cách lần trước >= 10 giây.
+              // (Server OSRM công cộng giới hạn tần suất gọi.)
+              if (_isLoadingRoute) return;
+
+              final last = _lastRouteFetchAt;
+              final tooSoon = last != null &&
+                  DateTime.now().difference(last) <
+                      const Duration(seconds: 10);
+
+              if (!tooSoon && _distanceToRoute(current) > 50) {
+                await _fetchRoute(
+                  current,
+                  targetPoint,
+                  clearOld: false,
+                );
+              }
+            },
+            onError: (Object error) {
+              if (!mounted) return;
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(
+                  content: Text('Mất tín hiệu GPS: $error'),
+                ),
+              );
+            },
+          );
     } catch (e) {
       if (!mounted) return;
 
@@ -604,6 +562,9 @@ class _MapScreenState extends State<MapScreen> {
     await _positionSubscription?.cancel();
     _positionSubscription = null;
 
+    // Vô hiệu hóa mọi yêu cầu tuyến đường đang chờ.
+    _routeRequestId++;
+
     if (!mounted) return;
 
     setState(() {
@@ -613,6 +574,7 @@ class _MapScreenState extends State<MapScreen> {
       _routeDistanceMeters = null;
       _routeDurationSeconds = null;
       _isLoadingRoute = false;
+      _followUser = true;
     });
   }
 
@@ -647,73 +609,78 @@ class _MapScreenState extends State<MapScreen> {
   // VỊ TRÍ HIỆN TẠI CỦA THIẾT BỊ
   // =========================================================
 
+  // Kiểm tra GPS đang bật + quyền vị trí. Trả về true nếu dùng được.
+  Future<bool> _ensureLocationPermission() async {
+    final serviceEnabled =
+    await Geolocator.isLocationServiceEnabled();
+
+    if (!serviceEnabled) {
+      if (!mounted) return false;
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: const Text(
+            'GPS đang tắt. Vui lòng bật vị trí trên thiết bị.',
+          ),
+          action: SnackBarAction(
+            label: 'MỞ',
+            onPressed: () {
+              Geolocator.openLocationSettings();
+            },
+          ),
+        ),
+      );
+      return false;
+    }
+
+    var permission = await Geolocator.checkPermission();
+
+    if (permission == LocationPermission.denied) {
+      permission = await Geolocator.requestPermission();
+    }
+
+    if (permission == LocationPermission.denied) {
+      if (!mounted) return false;
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Bạn đã từ chối quyền truy cập vị trí.'),
+        ),
+      );
+      return false;
+    }
+
+    if (permission == LocationPermission.deniedForever) {
+      if (!mounted) return false;
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: const Text(
+            'Quyền vị trí đã bị từ chối vĩnh viễn.',
+          ),
+          action: SnackBarAction(
+            label: 'CÀI ĐẶT',
+            onPressed: () {
+              Geolocator.openAppSettings();
+            },
+          ),
+        ),
+      );
+      return false;
+    }
+
+    return true;
+  }
+
   Future<void> _goToCurrentLocation() async {
     try {
-      final serviceEnabled =
-      await Geolocator.isLocationServiceEnabled();
-
-      if (!serviceEnabled) {
-        if (!mounted) return;
-
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: const Text(
-              'GPS đang tắt. Vui lòng bật vị trí trên thiết bị.',
-            ),
-            action: SnackBarAction(
-              label: 'MỞ',
-              onPressed: () {
-                Geolocator.openLocationSettings();
-              },
-            ),
-          ),
-        );
-        return;
-      }
-
-      LocationPermission permission =
-      await Geolocator.checkPermission();
-
-      if (permission == LocationPermission.denied) {
-        permission = await Geolocator.requestPermission();
-
-        if (permission == LocationPermission.denied) {
-          if (!mounted) return;
-
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text(
-                'Bạn đã từ chối quyền truy cập vị trí.',
-              ),
-            ),
-          );
-          return;
-        }
-      }
-
-      if (permission == LocationPermission.deniedForever) {
-        if (!mounted) return;
-
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: const Text(
-              'Quyền vị trí đã bị từ chối vĩnh viễn.',
-            ),
-            action: SnackBarAction(
-              label: 'CÀI ĐẶT',
-              onPressed: () {
-                Geolocator.openAppSettings();
-              },
-            ),
-          ),
-        );
-        return;
-      }
+      if (!await _ensureLocationPermission()) return;
 
       if (!mounted) return;
 
       setState(() {
         _isGettingLocation = true;
+        _followUser = true; // bấm nút này = bám theo vị trí lại
       });
 
       final position = await Geolocator.getCurrentPosition(
@@ -725,21 +692,17 @@ class _MapScreenState extends State<MapScreen> {
 
       if (!mounted) return;
 
+      final here = LatLng(
+        position.latitude,
+        position.longitude,
+      );
+
       setState(() {
-        _currentLocation = LatLng(
-          position.latitude,
-          position.longitude,
-        );
+        _currentLocation = here;
         _currentAccuracy = position.accuracy;
       });
 
-      _mapController.move(
-        LatLng(
-          position.latitude,
-          position.longitude,
-        ),
-        17,
-      );
+      _mapController.move(here, 17);
     } catch (e) {
       if (!mounted) return;
 
@@ -946,37 +909,50 @@ class _MapScreenState extends State<MapScreen> {
         .join(' ');
   }
 
+  // Tính sẵn text tìm kiếm / lọc cho từng HKD. Chỉ tính lại khi
+  // Firestore trả dữ liệu mới, KHÔNG tính lại mỗi lần GPS cập nhật vị trí.
+  List<_IndexedLocation> _indexFor(
+      QuerySnapshot<Map<String, dynamic>> snapshot,
+      ) {
+    if (identical(snapshot, _indexedSnapshot)) return _index;
+
+    _index = _locationsFromDocs(snapshot.docs)
+        .map(
+          (item) => _IndexedLocation(
+        item: item,
+        searchText: _searchableText(item),
+        provinceText: _locationFieldText(item, province: true),
+        wardText: _locationFieldText(item, province: false),
+      ),
+    )
+        .toList();
+    _indexedSnapshot = snapshot;
+
+    return _index;
+  }
+
   List<_BusinessLocation> _applyFilters(
-      List<_BusinessLocation> locations,
+      List<_IndexedLocation> indexed,
       ) {
     final query = _normalizeText(_searchQuery);
     final province = _normalizeLocationFilter(_provinceFilter);
     final ward = _normalizeLocationFilter(_wardFilter);
 
-    return locations.where((item) {
-      final searchable = _searchableText(item);
-
-      final provinceText = _locationFieldText(
-        item,
-        province: true,
-      );
-
-      final wardText = _locationFieldText(
-        item,
-        province: false,
-      );
-
+    return indexed
+        .where((entry) {
       final matchSearch =
-          query.isEmpty || searchable.contains(query);
+          query.isEmpty || entry.searchText.contains(query);
 
       final matchProvince =
-          province.isEmpty || provinceText.contains(province);
+          province.isEmpty || entry.provinceText.contains(province);
 
       final matchWard =
-          ward.isEmpty || wardText.contains(ward);
+          ward.isEmpty || entry.wardText.contains(ward);
 
       return matchSearch && matchProvince && matchWard;
-    }).toList();
+    })
+        .map((entry) => entry.item)
+        .toList();
   }
 
   Future<void> _showFilterDialog() async {
@@ -1060,13 +1036,13 @@ class _MapScreenState extends State<MapScreen> {
             );
           }
 
-          final docs = snapshot.data?.docs ?? [];
-          // Chuyển dữ liệu Firestore thành danh sách marker.
-          final allLocations = docs.isEmpty
-              ? <_BusinessLocation>[]
-              : _locationsFromDocs(docs);
+          // Chuyển dữ liệu Firestore thành danh sách marker (có cache).
+          final indexed = snapshot.data == null
+              ? <_IndexedLocation>[]
+              : _indexFor(snapshot.data!);
 
-          final safeLocations = _applyFilters(allLocations);
+          final allLocations = indexed;
+          final safeLocations = _applyFilters(indexed);
 
           _fitAllMarkers(safeLocations);
 
@@ -1078,14 +1054,22 @@ class _MapScreenState extends State<MapScreen> {
 
               FlutterMap(
                 mapController: _mapController,
-                options: const MapOptions(
-                  initialCenter: LatLng(
+                options: MapOptions(
+                  initialCenter: const LatLng(
                     10.957,
                     106.842,
                   ),
                   initialZoom: 12,
                   minZoom: 5,
                   maxZoom: 19,
+                  // Người dùng tự kéo/zoom bản đồ -> ngừng tự bám camera.
+                  onPositionChanged: (camera, hasGesture) {
+                    if (hasGesture && _isNavigating && _followUser) {
+                      setState(() {
+                        _followUser = false;
+                      });
+                    }
+                  },
                 ),
                 children: [
                   TileLayer(
@@ -1668,78 +1652,6 @@ class _MapScreenState extends State<MapScreen> {
   }
 
   // =========================================================
-  // INFO CARD
-  // =========================================================
-
-  Widget _infoCard({
-    required IconData icon,
-    required String title,
-    required String value,
-  }) {
-    return Expanded(
-      child: Container(
-        padding: const EdgeInsets.symmetric(
-          horizontal: 12,
-          vertical: 9,
-        ),
-        decoration: BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.circular(14),
-          boxShadow: const [
-            BoxShadow(
-              color: Colors.black12,
-              blurRadius: 8,
-              offset: Offset(0, 2),
-            ),
-          ],
-        ),
-        child: Row(
-          children: [
-            Container(
-              width: 35,
-              height: 35,
-              decoration: const BoxDecoration(
-                color: vnptLightBlue,
-                shape: BoxShape.circle,
-              ),
-              child: Icon(
-                icon,
-                color: vnptBlue,
-                size: 19,
-              ),
-            ),
-            const SizedBox(width: 9),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    title,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(
-                      color: textGrey,
-                      fontSize: 9.5,
-                    ),
-                  ),
-                  Text(
-                    value,
-                    style: const TextStyle(
-                      color: textDark,
-                      fontSize: 16,
-                      fontWeight: FontWeight.w800,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  // =========================================================
   // CHI TIẾT HKD
   // =========================================================
 
@@ -2112,6 +2024,10 @@ class _MapScreenState extends State<MapScreen> {
     if (confirm != true) return;
 
     try {
+      if (_navigationTarget?.id == item.id) {
+        await _stopInAppNavigation();
+      }
+
       await _businessRef.doc(item.id).delete();
 
       if (!mounted) return;
@@ -2410,6 +2326,21 @@ class _FilterDialogContentState extends State<_FilterDialogContent> {
 // =============================================================
 // MODEL
 // =============================================================
+
+// Dữ liệu HKD + text đã chuẩn hóa sẵn để tìm kiếm/lọc nhanh.
+class _IndexedLocation {
+  final _BusinessLocation item;
+  final String searchText;
+  final String provinceText;
+  final String wardText;
+
+  const _IndexedLocation({
+    required this.item,
+    required this.searchText,
+    required this.provinceText,
+    required this.wardText,
+  });
+}
 
 class _BusinessLocation {
   final String id;
