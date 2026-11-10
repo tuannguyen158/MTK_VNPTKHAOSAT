@@ -1,3 +1,4 @@
+
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
@@ -14,22 +15,23 @@ class RegisterScreen extends StatefulWidget {
 
 class _RegisterScreenState extends State<RegisterScreen> {
   final TextEditingController nameController =
-  TextEditingController();
+      TextEditingController();
 
   final TextEditingController emailController =
-  TextEditingController();
+      TextEditingController();
 
   final TextEditingController passwordController =
-  TextEditingController();
+      TextEditingController();
 
   final TextEditingController confirmPasswordController =
-  TextEditingController();
+      TextEditingController();
 
   bool showPassword = false;
   bool showConfirmPassword = false;
   bool loading = false;
   bool passwordFocused = false;
   bool confirmPasswordFocused = false;
+
   static const Color vnptBlue = Color(0xFF0057B8);
 
   // =========================
@@ -38,10 +40,12 @@ class _RegisterScreenState extends State<RegisterScreen> {
 
   Future<void> register() async {
     final name = nameController.text.trim();
-    final email = emailController.text.trim();
+    final email = emailController.text.trim().toLowerCase();
     final password = passwordController.text;
-    final confirmPassword =
-        confirmPasswordController.text;
+    final confirmPassword = confirmPasswordController.text;
+
+    // Tránh đăng ký nhiều lần
+    if (loading) return;
 
     // Kiểm tra họ tên
     if (name.isEmpty) {
@@ -117,13 +121,19 @@ class _RegisterScreenState extends State<RegisterScreen> {
       // =========================
 
       final UserCredential credential =
-      await FirebaseAuth.instance
-          .createUserWithEmailAndPassword(
+          await FirebaseAuth.instance
+              .createUserWithEmailAndPassword(
         email: email,
         password: password,
       );
 
-      final User user = credential.user!;
+      final User? user = credential.user;
+
+      if (user == null) {
+        throw Exception(
+          'Không thể tạo tài khoản người dùng.',
+        );
+      }
 
       // Lưu tên vào Firebase Authentication
       await user.updateDisplayName(name);
@@ -162,7 +172,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
 
       Future.delayed(
         const Duration(milliseconds: 700),
-            () {
+        () {
           if (!mounted) return;
 
           Navigator.pushReplacement(
@@ -174,25 +184,27 @@ class _RegisterScreenState extends State<RegisterScreen> {
         },
       );
     } on FirebaseAuthException catch (e) {
+      if (!mounted) return;
+
       String title = 'Đăng ký thất bại';
       String message = 'Không thể tạo tài khoản.';
 
       if (e.code == 'email-already-in-use') {
         title = 'Email đã tồn tại';
         message =
-        'Email này đã được sử dụng cho một tài khoản khác.';
+            'Email này đã được sử dụng cho một tài khoản khác.';
       } else if (e.code == 'invalid-email') {
         title = 'Email không hợp lệ';
         message =
-        'Vui lòng kiểm tra lại địa chỉ email.';
+            'Vui lòng kiểm tra lại địa chỉ email.';
       } else if (e.code == 'weak-password') {
         title = 'Mật khẩu quá yếu';
         message =
-        'Vui lòng sử dụng mật khẩu mạnh hơn.';
+            'Vui lòng sử dụng mật khẩu mạnh hơn.';
       } else if (e.code == 'operation-not-allowed') {
         title = 'Chưa bật đăng ký';
         message =
-        'Phương thức đăng nhập Email/Password chưa được bật trên Firebase.';
+            'Phương thức đăng nhập Email/Password chưa được bật trên Firebase.';
       }
 
       showAppNotification(
@@ -202,6 +214,8 @@ class _RegisterScreenState extends State<RegisterScreen> {
         type: NotificationType.error,
       );
     } catch (e) {
+      if (!mounted) return;
+
       showAppNotification(
         context,
         'Có lỗi xảy ra',
@@ -222,40 +236,33 @@ class _RegisterScreenState extends State<RegisterScreen> {
   // =========================
 
   InputDecoration inputDecoration(
-      String label,
-      IconData icon, {
-        Widget? suffixIcon,
-      }) {
+    String label,
+    IconData icon, {
+    Widget? suffixIcon,
+  }) {
     return InputDecoration(
       labelText: label,
-
       prefixIcon: Icon(
         icon,
         color: vnptBlue,
       ),
-
       suffixIcon: suffixIcon,
-
       filled: true,
       fillColor: Colors.white,
-
       contentPadding: const EdgeInsets.symmetric(
         horizontal: 18,
         vertical: 17,
       ),
-
       border: OutlineInputBorder(
         borderRadius: BorderRadius.circular(15),
         borderSide: BorderSide.none,
       ),
-
       enabledBorder: OutlineInputBorder(
         borderRadius: BorderRadius.circular(15),
         borderSide: BorderSide(
           color: Colors.grey.shade200,
         ),
       ),
-
       focusedBorder: OutlineInputBorder(
         borderRadius: BorderRadius.circular(15),
         borderSide: const BorderSide(
@@ -263,7 +270,6 @@ class _RegisterScreenState extends State<RegisterScreen> {
           width: 2,
         ),
       ),
-
       floatingLabelStyle: const TextStyle(
         color: vnptBlue,
         fontWeight: FontWeight.w600,
@@ -301,7 +307,6 @@ class _RegisterScreenState extends State<RegisterScreen> {
               ),
               child: Column(
                 children: [
-
                   // =====================
                   // NÚT QUAY LẠI
                   // =====================
@@ -384,7 +389,6 @@ class _RegisterScreenState extends State<RegisterScreen> {
                     ),
                     child: Column(
                       children: [
-
                         // =====================
                         // TIÊU ĐỀ FORM
                         // =====================
@@ -419,9 +423,8 @@ class _RegisterScreenState extends State<RegisterScreen> {
                         TextField(
                           controller: nameController,
                           textCapitalization:
-                          TextCapitalization.words,
-                          textInputAction:
-                          TextInputAction.next,
+                              TextCapitalization.words,
+                          textInputAction: TextInputAction.next,
                           decoration: inputDecoration(
                             'Họ và tên',
                             Icons.person_outline_rounded,
@@ -437,9 +440,8 @@ class _RegisterScreenState extends State<RegisterScreen> {
                         TextField(
                           controller: emailController,
                           keyboardType:
-                          TextInputType.emailAddress,
-                          textInputAction:
-                          TextInputAction.next,
+                              TextInputType.emailAddress,
+                          textInputAction: TextInputAction.next,
                           decoration: inputDecoration(
                             'Email',
                             Icons.email_outlined,
@@ -448,88 +450,93 @@ class _RegisterScreenState extends State<RegisterScreen> {
 
                         const SizedBox(height: 15),
 
+                        // =====================
+                        // MẬT KHẨU
+                        // =====================
 
-// =====================
-// MẬT KHẨU
-// =====================
+                        Focus(
+                          onFocusChange: (hasFocus) {
+                            if (!mounted) return;
 
-                  Focus(
-                      onFocusChange: (hasFocus) {
-            setState(() {
-            passwordFocused = hasFocus;
-            });
-            },
-              child: TextField(
-                controller: passwordController,
-                obscureText: !showPassword,
-                textInputAction: TextInputAction.next,
-                decoration: inputDecoration(
-                  'Mật khẩu',
-                  Icons.lock_outline_rounded,
-                  suffixIcon: passwordFocused
-                      ? IconButton(
-                    onPressed: () {
-                      setState(() {
-                        showPassword = !showPassword;
-                      });
-                    },
-                    icon: Icon(
-                      showPassword
-                          ? Icons.visibility_rounded
-                          : Icons.visibility_off_rounded,
-                      color: vnptBlue,
-                    ),
-                  )
-                      : null,
-                ),
-              ),
-            ),
+                            setState(() {
+                              passwordFocused = hasFocus;
+                            });
+                          },
+                          child: TextField(
+                            controller: passwordController,
+                            obscureText: !showPassword,
+                            textInputAction: TextInputAction.next,
+                            decoration: inputDecoration(
+                              'Mật khẩu',
+                              Icons.lock_outline_rounded,
+                              suffixIcon: passwordFocused
+                                  ? IconButton(
+                                      onPressed: () {
+                                        setState(() {
+                                          showPassword =
+                                              !showPassword;
+                                        });
+                                      },
+                                      icon: Icon(
+                                        showPassword
+                                            ? Icons.visibility_rounded
+                                            : Icons.visibility_off_rounded,
+                                        color: vnptBlue,
+                                      ),
+                                    )
+                                  : null,
+                            ),
+                          ),
+                        ),
 
-              const SizedBox(height: 15),
+                        const SizedBox(height: 15),
 
-// =====================
-// NHẬP LẠI MẬT KHẨU
-// =====================
+                        // =====================
+                        // NHẬP LẠI MẬT KHẨU
+                        // =====================
 
-              Focus(
-                onFocusChange: (hasFocus) {
-                  setState(() {
-                    confirmPasswordFocused = hasFocus;
-                  });
-                },
-                child: TextField(
-                  controller: confirmPasswordController,
-                  obscureText: !showConfirmPassword,
-                  textInputAction: TextInputAction.done,
-                  onSubmitted: (_) {
-                    if (!loading) {
-                      register();
-                    }
-                  },
-                  decoration: inputDecoration(
-                    'Nhập lại mật khẩu',
-                    Icons.lock_outline_rounded,
-                    suffixIcon: confirmPasswordFocused
-                        ? IconButton(
-                      onPressed: () {
-                        setState(() {
-                          showConfirmPassword =
-                          !showConfirmPassword;
-                        });
-                      },
-                      icon: Icon(
-                        showConfirmPassword
-                            ? Icons.visibility_rounded
-                            : Icons.visibility_off_rounded,
-                        color: vnptBlue,
-                      ),
-                    )
-                        : null,
-                  ),
-                ),
-              ),
+                        Focus(
+                          onFocusChange: (hasFocus) {
+                            if (!mounted) return;
 
-              const SizedBox(height: 24),
+                            setState(() {
+                              confirmPasswordFocused = hasFocus;
+                            });
+                          },
+                          child: TextField(
+                            controller:
+                                confirmPasswordController,
+                            obscureText: !showConfirmPassword,
+                            textInputAction: TextInputAction.done,
+                            onSubmitted: (_) {
+                              if (!loading) {
+                                register();
+                              }
+                            },
+                            decoration: inputDecoration(
+                              'Nhập lại mật khẩu',
+                              Icons.lock_outline_rounded,
+                              suffixIcon: confirmPasswordFocused
+                                  ? IconButton(
+                                      onPressed: () {
+                                        setState(() {
+                                          showConfirmPassword =
+                                              !showConfirmPassword;
+                                        });
+                                      },
+                                      icon: Icon(
+                                        showConfirmPassword
+                                            ? Icons.visibility_rounded
+                                            : Icons.visibility_off_rounded,
+                                        color: vnptBlue,
+                                      ),
+                                    )
+                                  : null,
+                            ),
+                          ),
+                        ),
+
+                        const SizedBox(height: 24),
 
                         // =====================
                         // NÚT ĐĂNG KÝ
@@ -539,37 +546,33 @@ class _RegisterScreenState extends State<RegisterScreen> {
                           width: double.infinity,
                           height: 54,
                           child: ElevatedButton(
-                            onPressed:
-                            loading ? null : register,
-                            style:
-                            ElevatedButton.styleFrom(
+                            onPressed: loading ? null : register,
+                            style: ElevatedButton.styleFrom(
                               backgroundColor: vnptBlue,
                               foregroundColor: Colors.white,
                               elevation: 3,
-                              shape:
-                              RoundedRectangleBorder(
+                              shape: RoundedRectangleBorder(
                                 borderRadius:
-                                BorderRadius.circular(15),
+                                    BorderRadius.circular(15),
                               ),
                             ),
                             child: loading
                                 ? const SizedBox(
-                              width: 23,
-                              height: 23,
-                              child:
-                              CircularProgressIndicator(
-                                strokeWidth: 2.5,
-                                color: Colors.white,
-                              ),
-                            )
+                                    width: 23,
+                                    height: 23,
+                                    child:
+                                        CircularProgressIndicator(
+                                      strokeWidth: 2.5,
+                                      color: Colors.white,
+                                    ),
+                                  )
                                 : const Text(
-                              'ĐĂNG KÝ',
-                              style: TextStyle(
-                                fontSize: 16,
-                                fontWeight:
-                                FontWeight.bold,
-                              ),
-                            ),
+                                    'ĐĂNG KÝ',
+                                    style: TextStyle(
+                                      fontSize: 16,
+                                      fontWeight: FontWeight.bold,
+                                    ),
+                                  ),
                           ),
                         ),
 
@@ -581,7 +584,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
 
                         Row(
                           mainAxisAlignment:
-                          MainAxisAlignment.center,
+                              MainAxisAlignment.center,
                           children: [
                             const Text(
                               'Đã có tài khoản?',
@@ -589,7 +592,6 @@ class _RegisterScreenState extends State<RegisterScreen> {
                                 color: Color(0xFF6B7280),
                               ),
                             ),
-
                             TextButton(
                               onPressed: () {
                                 Navigator.pop(context);
